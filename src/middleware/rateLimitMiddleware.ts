@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { redis } from '../services/redisClient';
 import { getRule } from '../services/ruleService';
 import { getAlgorithmFn } from '../algorithms';
+import { requestsTotal, rejectionsTotal, middlewareLatency } from '../observability/metrics';
 
 /**
  * Per-key rate limiting middleware.
@@ -34,7 +35,14 @@ export async function rateLimitMiddleware(
   const key = `rl:${apiKey}`;
   const now = Date.now();
   const fn = getAlgorithmFn(rule.algorithm);
+
+  // time only the algorithm call
+  const endTimer = middlewareLatency.startTimer({ algorithm: rule.algorithm });
   const result = await fn(redis, key, rule, now);
+  endTimer();
+
+  // increment total requests counter
+  requestsTotal.inc({ api_key: apiKey, algorithm: rule.algorithm });
 
   // X-RateLimit-Limit: the configured ceiling for this key
   const limit = rule.limit ?? rule.capacity ?? 0;
@@ -42,6 +50,9 @@ export async function rateLimitMiddleware(
   res.setHeader('X-RateLimit-Remaining', String(result.remaining));
 
   if (!result.allowed) {
+    // increment rejections counter
+    rejectionsTotal.inc({ api_key: apiKey, algorithm: rule.algorithm });
+
     // Retry-After: seconds until the window resets or a token is earned
     const retryAfterMs =
       rule.windowMs ?? Math.ceil(1000 / Math.max(rule.refillRate ?? 1, 0.001));
