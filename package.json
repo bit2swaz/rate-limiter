@@ -1,6 +1,6 @@
 {
   "name": "rate-limiter",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "redis-backed rate limiter as a service with token bucket and sliding window algorithms",
   "main": "dist/index.js",
   "scripts": {
@@ -29,15 +29,18 @@
   "dependencies": {
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "helmet": "^8.1.0",
     "ioredis": "^5.10.0",
     "js-yaml": "^4.1.1",
     "jsonwebtoken": "^9.0.3",
     "nanoid": "^3.3.11",
     "prom-client": "^15.1.3",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/helmet": "^0.0.48",
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/jsonwebtoken": "^9.0.10",

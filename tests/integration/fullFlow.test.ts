@@ -74,7 +74,7 @@ describe('full e2e - token_bucket', () => {
     await request(app)
       .post('/rules')
       .set('Authorization', `Bearer ${token}`)
-      .send({ apiKey: testKey, algorithm: 'token_bucket', capacity: 3, refillRate: 0 });
+      .send({ apiKey: testKey, algorithm: 'token_bucket', capacity: 3, refillRate: 0.001 });
 
     for (let i = 0; i < 3; i++) {
       expect((await request(app).get('/proxy/test').set('x-api-key', testKey)).status).toBe(200);
