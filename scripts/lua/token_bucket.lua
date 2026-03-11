@@ -14,9 +14,10 @@ local elapsed = (now - last_refill) / 1000
 local new_tokens = math.min(capacity, tokens + elapsed * refill_rate)
 
 if new_tokens >= 1 then
+  local remaining = math.floor(new_tokens - 1)
   redis.call('HMSET', key, 'tokens', new_tokens - 1, 'last_refill', now)
   redis.call('PEXPIRE', key, 60000)
-  return 1  -- allowed
+  return {1, remaining}  -- {allowed, remaining_tokens}
 else
-  return 0  -- rejected
+  return {0, 0}  -- rejected, no tokens remaining
 end

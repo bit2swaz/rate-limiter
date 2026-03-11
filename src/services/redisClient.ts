@@ -18,7 +18,7 @@ declare module 'ioredis' {
       capacity: number,
       refillRate: number,
       now: number,
-    ): Promise<number>;
+    ): Promise<[number, number]>;
 
     /**
      * Atomic sliding window log check via Lua script.
@@ -26,14 +26,14 @@ declare module 'ioredis' {
      * @param windowMs - window size in milliseconds
      * @param limit - max requests per window
      * @param now - current timestamp in ms
-     * @returns 1 if allowed, 0 if rejected
+     * @returns [allowed (0|1), remaining slots]
      */
     evalSlidingWindow(
       key: string,
       windowMs: number,
       limit: number,
       now: number,
-    ): Promise<number>;
+    ): Promise<[number, number]>;
   }
 }
 

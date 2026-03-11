@@ -33,29 +33,29 @@ describe('redis client - lua script commands', () => {
 
   it('evalTokenBucket command is defined and returns 0 or 1', async () => {
     const result = await redis.evalTokenBucket(`${base}:tb`, 10, 1, Date.now());
-    expect(typeof result).toBe('number');
-    expect([0, 1]).toContain(result);
+    expect(Array.isArray(result)).toBe(true);
+    expect([0, 1]).toContain(result[0]);
   });
 
   it('evalSlidingWindow command is defined and returns 0 or 1', async () => {
     const result = await redis.evalSlidingWindow(`${base}:sw`, 60000, 10, Date.now());
-    expect(typeof result).toBe('number');
-    expect([0, 1]).toContain(result);
+    expect(Array.isArray(result)).toBe(true);
+    expect([0, 1]).toContain(result[0]);
   });
 
   it('evalTokenBucket allows requests up to capacity then rejects', async () => {
     const key = `${base}:tb:cap`;
     const capacity = 3;
     const now = Date.now();
-    const results: number[] = [];
+    const results: [number, number][] = [];
 
     // refillRate=0 so no tokens are added between calls with same timestamp
     for (let i = 0; i < 5; i++) {
       results.push(await redis.evalTokenBucket(key, capacity, 0, now));
     }
 
-    const allowed = results.filter((r) => r === 1).length;
-    const rejected = results.filter((r) => r === 0).length;
+    const allowed = results.filter((r) => r[0] === 1).length;
+    const rejected = results.filter((r) => r[0] === 0).length;
     expect(allowed).toBe(3);
     expect(rejected).toBe(2);
   });
@@ -63,15 +63,15 @@ describe('redis client - lua script commands', () => {
   it('evalSlidingWindow allows requests within limit then rejects', async () => {
     const key = `${base}:sw:cap`;
     const limit = 3;
-    const results: number[] = [];
+    const results: [number, number][] = [];
 
     // each call gets a distinct timestamp so entries don't collide on ZADD score
     for (let i = 0; i < 5; i++) {
       results.push(await redis.evalSlidingWindow(key, 60000, limit, Date.now() + i));
     }
 
-    const allowed = results.filter((r) => r === 1).length;
-    const rejected = results.filter((r) => r === 0).length;
+    const allowed = results.filter((r) => r[0] === 1).length;
+    const rejected = results.filter((r) => r[0] === 0).length;
     expect(allowed).toBe(3);
     expect(rejected).toBe(2);
   });
@@ -89,12 +89,12 @@ describe('redis client - lua script commands', () => {
 
     // Verify it's empty
     const rejected = await redis.evalTokenBucket(key, capacity, refillRate, t0);
-    expect(rejected).toBe(0);
+    expect(rejected[0]).toBe(0);
 
     // Simulate 1 second passing: should have 5 new tokens
     const t1 = t0 + 1000;
     const allowed = await redis.evalTokenBucket(key, capacity, refillRate, t1);
-    expect(allowed).toBe(1);
+    expect(allowed[0]).toBe(1);
   });
 
   it('evalSlidingWindow prunes old entries outside the window', async () => {
@@ -110,6 +110,6 @@ describe('redis client - lua script commands', () => {
     // Now make a request in the current window - old entries should be pruned
     const tNow = Date.now();
     const result = await redis.evalSlidingWindow(key, windowMs, limit, tNow);
-    expect(result).toBe(1); // should be allowed because old entries are gone
+    expect(result[0]).toBe(1); // should be allowed because old entries are gone
   });
 });

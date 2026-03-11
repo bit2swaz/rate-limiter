@@ -14,7 +14,8 @@ if count < limit then
   -- append unique member using random suffix to avoid score collisions
   redis.call('ZADD', key, now, now .. math.random())
   redis.call('PEXPIRE', key, window)
-  return 1  -- allowed
+  local remaining = limit - count - 1
+  return {1, remaining}  -- {allowed, remaining_slots}
 else
-  return 0  -- rejected
+  return {0, 0}  -- rejected, no slots remaining
 end

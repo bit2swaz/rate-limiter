@@ -14,7 +14,7 @@ describe('fixedWindow', () => {
   it('allows requests within the limit', async () => {
     const key = `${base}:basic`;
     const result = await fixedWindow(redis, key, 5, 60000);
-    expect(result).toBe(1);
+    expect(result.allowed).toBe(1);
   });
 
   it('rejects requests that exceed the limit', async () => {
@@ -23,18 +23,18 @@ describe('fixedWindow', () => {
       await fixedWindow(redis, key, 3, 60000);
     }
     const result = await fixedWindow(redis, key, 3, 60000);
-    expect(result).toBe(0);
+    expect(result.allowed).toBe(0);
   });
 
   it('allows exactly limit requests and rejects the next one', async () => {
     const key = `${base}:exact`;
     const limit = 4;
-    const results: number[] = [];
+    const results = [];
     for (let i = 0; i < limit + 1; i++) {
       results.push(await fixedWindow(redis, key, limit, 60000));
     }
-    expect(results.slice(0, limit).every((r) => r === 1)).toBe(true);
-    expect(results[limit]).toBe(0);
+    expect(results.slice(0, limit).every((r) => r.allowed === 1)).toBe(true);
+    expect(results[limit].allowed).toBe(0);
   });
 
   it('resets counter after the window expires', async () => {
@@ -42,12 +42,12 @@ describe('fixedWindow', () => {
     // exhaust limit with a 100ms window
     await fixedWindow(redis, key, 1, 100);
     const rejected = await fixedWindow(redis, key, 1, 100);
-    expect(rejected).toBe(0);
+    expect(rejected.allowed).toBe(0);
 
     // wait for the window to expire
     await new Promise((r) => setTimeout(r, 150));
     const allowed = await fixedWindow(redis, key, 1, 100);
-    expect(allowed).toBe(1);
+    expect(allowed.allowed).toBe(1);
   });
 
   it('concurrent requests do not exceed the limit', async () => {
@@ -59,8 +59,8 @@ describe('fixedWindow', () => {
       Array.from({ length: total }, () => fixedWindow(redis, key, limit, 60000)),
     );
 
-    const allowed = results.filter((r) => r === 1).length;
-    const rejected = results.filter((r) => r === 0).length;
+    const allowed = results.filter((r) => r.allowed === 1).length;
+    const rejected = results.filter((r) => r.allowed === 0).length;
     expect(allowed).toBe(limit);
     expect(rejected).toBe(total - limit);
   });

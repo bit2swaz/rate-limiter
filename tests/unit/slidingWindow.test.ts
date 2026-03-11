@@ -14,7 +14,7 @@ describe('slidingWindow', () => {
   it('allows requests within the window and limit', async () => {
     const key = `${base}:basic`;
     const result = await slidingWindow(redis, key, 60000, 5, Date.now());
-    expect(result).toBe(1);
+    expect(result.allowed).toBe(1);
   });
 
   it('rejects requests at the limit', async () => {
@@ -25,20 +25,20 @@ describe('slidingWindow', () => {
       await slidingWindow(redis, key, 60000, limit, Date.now() + i);
     }
     const result = await slidingWindow(redis, key, 60000, limit, Date.now() + limit);
-    expect(result).toBe(0);
+    expect(result.allowed).toBe(0);
   });
 
   it('allows exactly limit requests then rejects', async () => {
     const key = `${base}:exact`;
     const limit = 4;
-    const results: number[] = [];
+    const results = [];
 
     for (let i = 0; i < limit + 1; i++) {
       results.push(await slidingWindow(redis, key, 60000, limit, Date.now() + i));
     }
 
-    expect(results.slice(0, limit).every((r) => r === 1)).toBe(true);
-    expect(results[limit]).toBe(0);
+    expect(results.slice(0, limit).every((r) => r.allowed === 1)).toBe(true);
+    expect(results[limit].allowed).toBe(0);
   });
 
   it('prunes old entries outside the window so new requests succeed', async () => {
@@ -53,10 +53,10 @@ describe('slidingWindow', () => {
 
     // entries are old — new requests in the current window should be allowed
     const tNow = Date.now();
-    expect(await slidingWindow(redis, key, windowMs, limit, tNow)).toBe(1);
-    expect(await slidingWindow(redis, key, windowMs, limit, tNow + 1)).toBe(1);
+    expect((await slidingWindow(redis, key, windowMs, limit, tNow)).allowed).toBe(1);
+    expect((await slidingWindow(redis, key, windowMs, limit, tNow + 1)).allowed).toBe(1);
     // now at limit inside current window
-    expect(await slidingWindow(redis, key, windowMs, limit, tNow + 2)).toBe(0);
+    expect((await slidingWindow(redis, key, windowMs, limit, tNow + 2)).allowed).toBe(0);
   });
 
   it('allows requests again after window slides past old entries', async () => {
@@ -68,12 +68,12 @@ describe('slidingWindow', () => {
     await slidingWindow(redis, key, windowMs, limit, t0);
     await slidingWindow(redis, key, windowMs, limit, t0 + 1);
     // at limit — next should be rejected
-    expect(await slidingWindow(redis, key, windowMs, limit, t0 + 2)).toBe(0);
+    expect((await slidingWindow(redis, key, windowMs, limit, t0 + 2)).allowed).toBe(0);
 
     // wait for the window to slide past both entries
     await new Promise((r) => setTimeout(r, 250));
     const tNew = Date.now();
-    expect(await slidingWindow(redis, key, windowMs, limit, tNew)).toBe(1);
+    expect((await slidingWindow(redis, key, windowMs, limit, tNew)).allowed).toBe(1);
   });
 
   it('concurrent requests do not exceed the limit', async () => {
@@ -88,8 +88,8 @@ describe('slidingWindow', () => {
       ),
     );
 
-    const allowed = results.filter((r) => r === 1).length;
-    const rejected = results.filter((r) => r === 0).length;
+    const allowed = results.filter((r) => r.allowed === 1).length;
+    const rejected = results.filter((r) => r.allowed === 0).length;
     expect(allowed).toBe(limit);
     expect(rejected).toBe(total - limit);
   });

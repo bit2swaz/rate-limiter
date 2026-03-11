@@ -1,5 +1,6 @@
 // sliding window algorithm - implemented in phase 2
 import type Redis from 'ioredis';
+import type { AlgorithmResult } from './index';
 
 export async function slidingWindow(
   redis: Redis,
@@ -7,12 +8,12 @@ export async function slidingWindow(
   windowMs: number,
   limit: number,
   now: number,
-): Promise<0 | 1> {
-  const result = await (redis as import('ioredis').Redis).evalSlidingWindow(
+): Promise<AlgorithmResult> {
+  const [allowed, remaining] = await (redis as import('ioredis').Redis).evalSlidingWindow(
     key,
     windowMs,
     limit,
     now,
   );
-  return result as 0 | 1;
+  return { allowed: allowed as 0 | 1, remaining };
 }

@@ -5,6 +5,16 @@ import { slidingWindow } from './slidingWindow';
 
 export type AlgorithmName = 'token_bucket' | 'sliding_window' | 'fixed_window';
 
+/**
+ * Unified result returned by every rate-limiting algorithm.
+ * `allowed` — 1 if the request is permitted, 0 if rejected.
+ * `remaining` — how many more requests are allowed in the current window/bucket.
+ */
+export interface AlgorithmResult {
+  allowed: 0 | 1;
+  remaining: number;
+}
+
 export interface RuleContext {
   algorithm: AlgorithmName;
   limit?: number;
@@ -18,7 +28,7 @@ export type AlgorithmFn = (
   key: string,
   ctx: RuleContext,
   now: number,
-) => Promise<0 | 1>;
+) => Promise<AlgorithmResult>;
 
 export class UnknownAlgorithmError extends Error {
   constructor(name: string) {
