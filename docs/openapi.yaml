@@ -1,0 +1,538 @@
+openapi: 3.1.0
+info:
+  title: rate limiter as a service
+  description: >
+    a redis-backed http rate limiting service. configure per-api-key rules via
+    rest, choose from fixed_window, sliding_window, or token_bucket algorithms,
+    and observe traffic through prometheus metrics.
+  version: 0.1.0
+  license:
+    name: isc
+
+servers:
+  - url: http://localhost:3000
+    description: local development
+
+tags:
+  - name: auth
+    description: admin authentication
+  - name: keys
+    description: api key management
+  - name: rules
+    description: rate limit rule configuration
+  - name: proxy
+    description: rate-limited passthrough endpoint
+  - name: observability
+    description: health and metrics
+
+# ---------------------------------------------------------------------------
+# security schemes
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: jwt obtained from POST /auth/token
+
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: api key obtained from POST /keys
+
+  # -------------------------------------------------------------------------
+  # reusable schemas
+  # -------------------------------------------------------------------------
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: missing x-api-key header
+
+    JwtToken:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: signed jwt valid for the duration of JWT_EXPIRES_IN
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiJ9.xxxxx
+
+    ApiKey:
+      type: object
+      required: [apiKey]
+      properties:
+        apiKey:
+          type: string
+          description: nanoid-prefixed api key
+          example: usr_V1StGXR8_Z5jdHi6B-myT
+
+    # rule base — fields shared by all algorithms
+    RuleBase:
+      type: object
+      required: [apiKey, algorithm]
+      properties:
+        apiKey:
+          type: string
+          description: the api key this rule applies to
+          example: usr_V1StGXR8_Z5jdHi6B-myT
+        algorithm:
+          type: string
+          enum: [fixed_window, sliding_window, token_bucket]
+          description: rate limiting algorithm to use
+
+    RuleFixedWindow:
+      allOf:
+        - $ref: '#/components/schemas/RuleBase'
+        - type: object
+          required: [limit, windowMs]
+          properties:
+            algorithm:
+              type: string
+              enum: [fixed_window]
+            limit:
+              type: integer
+              minimum: 1
+              description: maximum requests allowed per window
+              example: 100
+            windowMs:
+              type: integer
+              minimum: 1
+              description: window duration in milliseconds
+              example: 60000
+
+    RuleSlidingWindow:
+      allOf:
+        - $ref: '#/components/schemas/RuleBase'
+        - type: object
+          required: [limit, windowMs]
+          properties:
+            algorithm:
+              type: string
+              enum: [sliding_window]
+            limit:
+              type: integer
+              minimum: 1
+              description: maximum requests allowed in the sliding window
+              example: 100
+            windowMs:
+              type: integer
+              minimum: 1
+              description: window duration in milliseconds
+              example: 60000
+
+    RuleTokenBucket:
+      allOf:
+        - $ref: '#/components/schemas/RuleBase'
+        - type: object
+          required: [capacity, refillRate]
+          properties:
+            algorithm:
+              type: string
+              enum: [token_bucket]
+            capacity:
+              type: integer
+              minimum: 1
+              description: maximum number of tokens in the bucket
+              example: 50
+            refillRate:
+              type: number
+              minimum: 0.001
+              description: tokens added per second
+              example: 10
+
+    Rule:
+      oneOf:
+        - $ref: '#/components/schemas/RuleFixedWindow'
+        - $ref: '#/components/schemas/RuleSlidingWindow'
+        - $ref: '#/components/schemas/RuleTokenBucket'
+      discriminator:
+        propertyName: algorithm
+        mapping:
+          fixed_window: '#/components/schemas/RuleFixedWindow'
+          sliding_window: '#/components/schemas/RuleSlidingWindow'
+          token_bucket: '#/components/schemas/RuleTokenBucket'
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ProxyResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: ok
+
+  # -------------------------------------------------------------------------
+  # reusable responses
+  # -------------------------------------------------------------------------
+  responses:
+    Unauthorized:
+      description: missing or invalid authorization
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missingHeader:
+              summary: missing authorization header
+              value: { error: 'missing or invalid authorization header' }
+            invalidToken:
+              summary: invalid or expired token
+              value: { error: 'invalid or expired token' }
+
+    NotFound:
+      description: resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: rule not found
+
+    RateLimitExceeded:
+      description: rate limit exceeded
+      headers:
+        x-ratelimit-limit:
+          schema:
+            type: integer
+          description: configured limit or capacity
+        x-ratelimit-remaining:
+          schema:
+            type: integer
+          description: remaining requests (always 0 on 429)
+        retry-after:
+          schema:
+            type: integer
+          description: seconds until the next request will be accepted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: rate limit exceeded
+
+    InternalError:
+      description: internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: internal server error
+
+# ---------------------------------------------------------------------------
+# paths
+# ---------------------------------------------------------------------------
+paths:
+  /health:
+    get:
+      tags: [observability]
+      summary: health check
+      description: returns ok if the server is up. does not check redis connectivity.
+      operationId: getHealth
+      responses:
+        '200':
+          description: server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+
+  /auth/token:
+    post:
+      tags: [auth]
+      summary: issue an admin jwt
+      description: >
+        authenticates with static admin credentials (configured via ADMIN_USER and ADMIN_PASS
+        environment variables) and returns a signed jwt. the jwt is required as a bearer token
+        for all admin endpoints (POST /keys, /rules CRUD).
+      operationId: postAuthToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  example: admin
+            example:
+              username: admin
+              password: admin
+      responses:
+        '200':
+          description: credentials accepted, jwt returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JwtToken'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /keys:
+    post:
+      tags: [keys]
+      summary: create a new api key
+      description: >
+        generates a nanoid-based api key (format: usr_<nanoid>), stores it in the
+        redis set rl:keys, and returns it. the returned key is used as the
+        x-api-key header on proxy requests.
+      operationId: postKeys
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: api key created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiKey'
+              example:
+                apiKey: usr_V1StGXR8_Z5jdHi6B-myT
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /rules:
+    post:
+      tags: [rules]
+      summary: create a rate limit rule
+      description: >
+        creates a rate limit rule for the given api key and persists it in redis.
+        the algorithm determines which additional fields are required:
+        - fixed_window and sliding_window require limit and windowMs
+        - token_bucket requires capacity and refillRate
+      operationId: postRules
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Rule'
+            examples:
+              slidingWindow:
+                summary: sliding window (100 req/min)
+                value:
+                  apiKey: usr_V1StGXR8_Z5jdHi6B-myT
+                  algorithm: sliding_window
+                  limit: 100
+                  windowMs: 60000
+              fixedWindow:
+                summary: fixed window (50 req/30s)
+                value:
+                  apiKey: usr_V1StGXR8_Z5jdHi6B-myT
+                  algorithm: fixed_window
+                  limit: 50
+                  windowMs: 30000
+              tokenBucket:
+                summary: token bucket (50 capacity, 10 tokens/sec)
+                value:
+                  apiKey: usr_V1StGXR8_Z5jdHi6B-myT
+                  algorithm: token_bucket
+                  capacity: 50
+                  refillRate: 10
+      responses:
+        '201':
+          description: rule created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '400':
+          description: invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingFields:
+                  value: { error: 'token_bucket requires capacity and refillRate' }
+                badAlgorithm:
+                  value: { error: 'algorithm must be one of: token_bucket, sliding_window, fixed_window' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /rules/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: the api key whose rule you want to retrieve, update, or delete
+        schema:
+          type: string
+          example: usr_V1StGXR8_Z5jdHi6B-myT
+
+    get:
+      tags: [rules]
+      summary: get a rule by api key
+      operationId: getRuleByKey
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: rule found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [rules]
+      summary: update (patch) a rule
+      description: >
+        merges the provided fields into the existing rule. only supplied fields
+        are updated; omitted fields retain their current values.
+      operationId: putRuleByKey
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: partial rule — any updatable field
+              properties:
+                limit:
+                  type: integer
+                  minimum: 1
+                windowMs:
+                  type: integer
+                  minimum: 1
+                capacity:
+                  type: integer
+                  minimum: 1
+                refillRate:
+                  type: number
+                  minimum: 0.001
+            example:
+              limit: 200
+      responses:
+        '200':
+          description: rule updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [rules]
+      summary: delete a rule
+      description: removes the rule from redis. subsequent requests with this key will receive 401.
+      operationId: deleteRuleByKey
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: rule deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /proxy/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: any sub-path (the proxy currently echoes 200 ok)
+        schema:
+          type: string
+          example: anything
+    get:
+      tags: [proxy]
+      summary: rate-limited passthrough (GET)
+      description: >
+        any http method is supported. the rate limit middleware reads x-api-key,
+        looks up the rule, runs the algorithm, and either forwards the request
+        (200) or rejects it (429). sets x-ratelimit-limit, x-ratelimit-remaining,
+        and retry-after headers on every response.
+      operationId: proxyGet
+      security:
+        - apiKeyHeader: []
+      responses:
+        '200':
+          description: request allowed
+          headers:
+            x-ratelimit-limit:
+              schema:
+                type: integer
+            x-ratelimit-remaining:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /metrics:
+    get:
+      tags: [observability]
+      summary: prometheus metrics
+      description: >
+        exposes all prom-client metrics in prometheus text exposition format
+        (content-type: text/plain; version=0.0.4). includes default node.js
+        process metrics plus ratelimiter_requests_total,
+        ratelimiter_rejections_total, and ratelimiter_middleware_duration_seconds.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: prometheus metrics payload
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP ratelimiter_requests_total total requests processed
+                # TYPE ratelimiter_requests_total counter
+                ratelimiter_requests_total{api_key="usr_abc",algorithm="sliding_window"} 42
+
+  /docs:
+    get:
+      tags: [observability]
+      summary: swagger ui (development only)
+      description: >
+        serves the swagger ui for interactive api exploration. only available
+        when NODE_ENV is not set to production.
+      operationId: getDocs
+      responses:
+        '200':
+          description: swagger ui html page
+          content:
+            text/html:
+              schema:
+                type: string

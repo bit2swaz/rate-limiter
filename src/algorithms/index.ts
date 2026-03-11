@@ -30,6 +30,11 @@ export type AlgorithmFn = (
   now: number,
 ) => Promise<AlgorithmResult>;
 
+/**
+ * thrown by {@link getAlgorithmFn} when an unrecognised algorithm name is
+ * provided. extends Error so it is caught by the middleware try/catch and
+ * results in a 500 response rather than an unhandled rejection.
+ */
 export class UnknownAlgorithmError extends Error {
   constructor(name: string) {
     super(`unknown algorithm: ${name}`);
@@ -46,6 +51,19 @@ const slidingWindowFn: AlgorithmFn = (redis, key, ctx, now) =>
 const fixedWindowFn: AlgorithmFn = (redis, key, ctx) =>
   fixedWindow(redis, key, ctx.limit ?? 0, ctx.windowMs ?? 0);
 
+/**
+ * strategy factory — maps an algorithm name to its corresponding
+ * {@link AlgorithmFn}. all returned functions share the same
+ * `(redis, key, ctx, now) => Promise<AlgorithmResult>` signature so the
+ * middleware can call them uniformly without knowing the concrete type.
+ *
+ * @param name - one of the supported algorithm names
+ * @throws {UnknownAlgorithmError} if `name` is not a recognised algorithm
+ *
+ * @example
+ * const fn = getAlgorithmFn('token_bucket');
+ * const result = await fn(redis, `rl:${apiKey}`, rule, Date.now());
+ */
 export function getAlgorithmFn(name: AlgorithmName): AlgorithmFn {
   switch (name) {
     case 'token_bucket':
