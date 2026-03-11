@@ -1,0 +1,11 @@
+# local dev override — bind-mounts src/ for hot reload with tsx watch
+# usage: docker compose up   (this file is picked up automatically)
+services:
+  app:
+    build:
+      target: builder
+    command: ["npx", "tsx", "watch", "src/index.ts"]
+    volumes:
+      - ../src:/app/src
+    environment:
+      - NODE_ENV=development
