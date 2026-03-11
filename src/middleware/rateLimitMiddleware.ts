@@ -34,32 +34,38 @@ export async function rateLimitMiddleware(
 
   const key = `rl:${apiKey}`;
   const now = Date.now();
-  const fn = getAlgorithmFn(rule.algorithm);
 
-  // time only the algorithm call
-  const endTimer = middlewareLatency.startTimer({ algorithm: rule.algorithm });
-  const result = await fn(redis, key, rule, now);
-  endTimer();
+  try {
+    const fn = getAlgorithmFn(rule.algorithm);
 
-  // increment total requests counter
-  requestsTotal.inc({ api_key: apiKey, algorithm: rule.algorithm });
+    // time only the algorithm call
+    const endTimer = middlewareLatency.startTimer({ algorithm: rule.algorithm });
+    const result = await fn(redis, key, rule, now);
+    endTimer();
 
-  // X-RateLimit-Limit: the configured ceiling for this key
-  const limit = rule.limit ?? rule.capacity ?? 0;
-  res.setHeader('X-RateLimit-Limit', String(limit));
-  res.setHeader('X-RateLimit-Remaining', String(result.remaining));
+    // increment total requests counter
+    requestsTotal.inc({ api_key: apiKey, algorithm: rule.algorithm });
 
-  if (!result.allowed) {
-    // increment rejections counter
-    rejectionsTotal.inc({ api_key: apiKey, algorithm: rule.algorithm });
+    // X-RateLimit-Limit: the configured ceiling for this key
+    const limit = rule.limit ?? rule.capacity ?? 0;
+    res.setHeader('X-RateLimit-Limit', String(limit));
+    res.setHeader('X-RateLimit-Remaining', String(result.remaining));
 
-    // Retry-After: seconds until the window resets or a token is earned
-    const retryAfterMs =
-      rule.windowMs ?? Math.ceil(1000 / Math.max(rule.refillRate ?? 1, 0.001));
-    res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
-    res.status(429).json({ error: 'rate limit exceeded' });
-    return;
+    if (!result.allowed) {
+      // increment rejections counter
+      rejectionsTotal.inc({ api_key: apiKey, algorithm: rule.algorithm });
+
+      // Retry-After: seconds until the window resets or a token is earned
+      const retryAfterMs =
+        rule.windowMs ?? Math.ceil(1000 / Math.max(rule.refillRate ?? 1, 0.001));
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+      res.status(429).json({ error: 'rate limit exceeded' });
+      return;
+    }
+
+    next();
+  } catch (err) {
+    console.error('rate limit middleware error:', (err as Error).message);
+    res.status(500).json({ error: 'internal server error' });
   }
-
-  next();
 }

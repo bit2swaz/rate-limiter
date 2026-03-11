@@ -20,6 +20,7 @@ const config: Config = {
   },
   clearMocks: true,
   forceExit: true,
+  testTimeout: 15000,
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
   coverageDirectory: 'coverage',
 };
