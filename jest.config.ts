@@ -4,6 +4,8 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   rootDir: '.',
+  // runs before each test file, sets up env vars via dotenv
+  setupFiles: ['<rootDir>/jest.setup.ts'],
   testMatch: ['<rootDir>/tests/**/*.test.ts'],
   transform: {
     '^.+\\.tsx?$': [
@@ -17,6 +19,7 @@ const config: Config = {
     ],
   },
   clearMocks: true,
+  forceExit: true,
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
   coverageDirectory: 'coverage',
 };

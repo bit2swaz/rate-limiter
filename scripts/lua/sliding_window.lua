@@ -1,4 +1,20 @@
--- sliding window lua script - implemented in phase 1
--- KEYS[1] = key
+-- KEYS[1] = rate limit key
 -- ARGV[1] = window_ms, ARGV[2] = limit, ARGV[3] = now (ms)
-return 1
+local key = KEYS[1]
+local window = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local cutoff = now - window
+
+-- remove entries that have fallen outside the window
+redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
+local count = redis.call('ZCARD', key)
+
+if count < limit then
+  -- append unique member using random suffix to avoid score collisions
+  redis.call('ZADD', key, now, now .. math.random())
+  redis.call('PEXPIRE', key, window)
+  return 1  -- allowed
+else
+  return 0  -- rejected
+end
