@@ -17,38 +17,15 @@ A production-grade, Redis-backed HTTP rate limiting service exposing a REST API 
 
 ## Architecture
 
-```
-Client Request
-      │
-      ▼
-┌─────────────┐
-│  Express    │  ← REST API (configure rules, issue keys)
-│  HTTP Layer │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────┐
-│  Rate Limit     │  ← Middleware pipeline
-│  Middleware     │
-└──────┬──────────┘
-       │
-  ┌────┴────┐
-  │         │
-  ▼         ▼
-Token    Sliding
-Bucket   Window     ← Algorithm strategies (Strategy Pattern)
-  │         │
-  └────┬────┘
-       │
-       ▼
-┌─────────────┐
-│    Redis    │  ← Atomic Lua scripts for thread-safe counters
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│ Prometheus  │  ← /metrics endpoint (requests, rejections, latency)
-└─────────────┘
+```mermaid
+flowchart TD
+    A[Client Request] --> B["Express HTTP Layer\nREST API: configure rules, issue keys"]
+    B --> C["Rate Limit Middleware\nMiddleware pipeline"]
+    C --> D[Fixed Window]
+    C --> E[Sliding Window]
+    C --> F[Token Bucket]
+    D & E & F --> G["Redis\nAtomic Lua scripts for thread-safe counters"]
+    G --> H["Prometheus\n/metrics endpoint: requests, rejections, latency"]
 ```
 
 ## Directory Structure
@@ -91,7 +68,7 @@ rate-limiter/
 
 ## Core Implementation Details
 
-### 1. Token Bucket (Lua Script — atomic, no race conditions)
+### 1. Token Bucket (Lua Script, atomic, no race conditions)
 ```lua
 -- scripts/lua/token_bucket.lua
 -- KEYS[1] = rate limit key, ARGV[1] = capacity, ARGV[2] = refill_rate/sec, ARGV[3] = now (ms)

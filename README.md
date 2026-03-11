@@ -8,38 +8,15 @@ a production-grade, redis-backed http rate limiting service built with node.js a
 
 ## architecture
 
-```
-client request
-      |
-      v
-+-------------+
-|   express   |  <- rest api (configure rules, issue keys)
-|  http layer |
-+------+------+
-       |
-       v
-+-----------------+
-|  rate limit     |  <- middleware pipeline
-|  middleware     |
-+------+----------+
-       |
-  +----+----+
-  |         |
-  v         v
-token    sliding        <- algorithm strategies (strategy pattern)
-bucket   window
-  |         |
-  +----+----+
-       |
-       v
-+-------------+
-|    redis    |  <- atomic lua scripts for thread-safe counters
-+-------------+
-       |
-       v
-+-------------+
-| prometheus  |  <- /metrics endpoint (requests, rejections, latency)
-+-------------+
+```mermaid
+flowchart TD
+    A[client request] --> B["express http layer\nrest api: configure rules, issue keys"]
+    B --> C["rate limit middleware\nmiddleware pipeline"]
+    C --> D[fixed window]
+    C --> E[sliding window]
+    C --> F[token bucket]
+    D & E & F --> G["redis\natomic lua scripts for thread-safe counters"]
+    G --> H["prometheus\n/metrics: requests, rejections, latency"]
 ```
 
 ---
@@ -87,7 +64,7 @@ npm run dev
 
 ---
 
-## first api call — end-to-end walkthrough
+## first api call: end-to-end walkthrough
 
 ### 1. get an admin jwt
 
@@ -108,7 +85,7 @@ curl -s -X POST http://localhost:3000/keys \
 export API_KEY="usr_abc123..."
 ```
 
-### 3. create a rate limit rule (sliding window — 5 req / 10 sec)
+### 3. create a rate limit rule (sliding window, 5 req / 10 sec)
 
 ```bash
 curl -s -X POST http://localhost:3000/rules \
@@ -197,8 +174,8 @@ curl -s http://localhost:3000/metrics | grep ratelimiter
   "refillRate": 10
 }
 
-// response 201 — echoes the created rule
-// response 400 — { "error": "token_bucket requires capacity and refillRate" }
+// response 201: echoes the created rule
+// response 400: { "error": "token_bucket requires capacity and refillRate" }
 ```
 
 ### response headers on every `/proxy/*` response
@@ -251,7 +228,7 @@ all configuration is via environment variables. copy `.env.example` to `.env` fo
 | `JWT_EXPIRES_IN` | `7d` | jwt expiry (any value accepted by jsonwebtoken) |
 | `ADMIN_USER` | `admin` | username for `POST /auth/token` |
 | `ADMIN_PASS` | `admin` | password for `POST /auth/token` |
-| `NODE_ENV` | — | set to `production` to disable swagger ui at `/docs` |
+| `NODE_ENV` | (unset) | set to `production` to disable swagger ui at `/docs` |
 
 generate a production-grade secret:
 
@@ -402,4 +379,4 @@ histogram_quantile(0.99, rate(ratelimiter_middleware_duration_seconds_bucket[5m]
 
 ## license
 
-isc
+mit
